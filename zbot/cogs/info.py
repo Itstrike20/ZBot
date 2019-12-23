@@ -14,6 +14,17 @@ class Info(bot_command.Command):
     MOD_ROLE_NAMES = ['Administrateur']
     USER_ROLE_NAMES = ['Joueur']
 
+    PRIMARY_ROLES = [
+        'Administrateur',
+        'Modérateur',
+        'Wargaming',
+        'Contributeur',
+        'Mentor',
+        'Contact de clan',
+        'Joueur',
+        'Visiteur',
+    ]
+
     def __init__(self, bot):
         super(Info, self).__init__(bot)
 
@@ -43,11 +54,10 @@ class Info(bot_command.Command):
     async def display_generic_help(context):
         bot_display_name = await Info.get_bot_display_name(context.bot.user, context)
         embed = discord.Embed(title=f"Commandes de @{bot_display_name}", color=Info.EMBED_COLOR)
-        command_list = Info.get_command_list(context.bot)
         commands_by_cog = {}
-        for command in command_list:
+        for command in Info.get_command_list(context.bot):
             commands_by_cog.setdefault(command.cog, []).append(command)
-        for cog in sorted(commands_by_cog, key=lambda cog: cog.DISPLAY_SEQUENCE):
+        for cog in sorted(commands_by_cog, key=lambda c: c.DISPLAY_SEQUENCE):
             embed.add_field(
                 name=cog.DISPLAY_NAME,
                 value="\n".join([f"• `+{command}` : {command.brief}" for command in commands_by_cog[cog]]),
@@ -89,6 +99,40 @@ class Info(bot_command.Command):
             return command_list
         else:  # Do not test for commands.core.Command as it is a superclass of commands.core.Group
             return [command_container]
+
+    @commands.command(
+        name='members',
+        aliases=['membres', 'joueurs', 'combien'],
+        brief="Affiche le nombre de membres du serveur par rôle",
+        help="Le total des membres du serveur est affiché, ainsi qu'un décompte détaillé pour chacun "
+             "des rôles principaux.",
+        ignore_extra=False,
+    )
+    @commands.guild_only()
+    async def members(self, context: commands.Context):
+        role_sizes = {}
+        for primary_role_name in self.PRIMARY_ROLES:
+            guild_role = utils.try_get(context.guild.roles, name=primary_role_name)
+            role_sizes[primary_role_name] = len(guild_role.members)
+
+        embed = discord.Embed(
+            title=f"Décompte des membres du serveur",
+            description=f"Total : **{len(context.guild.members)}** membres pour "
+                        f"**{len(self.PRIMARY_ROLES)}** roles principaux",
+            color=self.EMBED_COLOR
+        )
+        for role_name in self.PRIMARY_ROLES:
+            embed.add_field(
+                name=role_name,
+                value=f"**{role_sizes[role_name]}** membres",
+                inline=True
+            )
+        embed.add_field(
+            name="Banni",
+            value=f"**{len(await context.guild.bans())}** boulets",
+            inline=True
+        )
+        await context.send(embed=embed)
 
     @commands.command(
         name='version',
