@@ -277,6 +277,7 @@ class Admin(command.Command):
              "• L'auteur de l'annonce n'a pas publié d'autres annonces\n"
              "• La longueur de l'annonce est inférieure à 1200 caractères (min 100/ligne)\n"
              "• L'annonce ne contient aucun embed\n"
+             "• L'annonce précédente du même auteur est antérieure à 30 jours\n"
              "La date `after` filtre les messages dans le temps et doit être au format "
              "`\"YYYY-MM-DD HH:MM:SS\"`",
         ignore_extra=False
