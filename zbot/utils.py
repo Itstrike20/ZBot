@@ -167,13 +167,18 @@ def get_exp_values(exp_values_file_path: pathlib.Path, exp_values_file_url) -> d
     Download or load the last version of expected WN8 values.
     On Heroku, the file storing expected WN8 values gets deleted automatically when the bot shuts down.
     """
+    exp_values_json = None
     exp_values_file_path.parent.mkdir(parents=True, exist_ok=True)
     if not exp_values_file_path.exists():
         response = requests.get(exp_values_file_url)
-        with exp_values_file_path.open(mode='w') as exp_values_file:
-            exp_values_file.write(response.text)
-            exp_values_json = response.json()
-        logger.info(f"Could not find {exp_values_file_path.name}, created it.")
+        if response.ok:
+            with exp_values_file_path.open(mode='w') as exp_values_file:
+                exp_values_file.write(response.text)
+                exp_values_json = response.json()
+            logger.info(f"Could not find {exp_values_file_path.name}, created it.")
+        else:
+            logger.warning(f"Could not reach {exp_values_file_url} - "
+                           f"Skipped loading of expected WN8 values.")
     else:
         with exp_values_file_path.open(mode='r') as exp_values_file:
             exp_values_json = json.load(exp_values_file)
