@@ -10,7 +10,9 @@ class MongoDBConnector:
 
     USER_NAME = 'Zedd7'
     DATABASE_NAME = 'zbot'
-    COLLECTION_NAMES = ['lottery']
+    RECRUITMENT_ANNOUNCES_COLLECTION = 'recruitment_announce'
+    PENDING_LOTTERIES_COLLECTION = 'pending_lottery'
+    COLLECTION_NAMES = [RECRUITMENT_ANNOUNCES_COLLECTION, PENDING_LOTTERIES_COLLECTION]
 
     def __init__(self):
         self.client = None
@@ -39,16 +41,26 @@ class MongoDBConnector:
 
         return self.connected
 
+    # Admin
+
+    def update_recruitment_announces(self, recruitment_announces):
+        for announce in recruitment_announces:
+            self.database[self.RECRUITMENT_ANNOUNCES_COLLECTION].update_one(
+                {'_id': announce.author.id}, {'$set': {'time': announce.create_date}})
+
+    # Lottery
+
     def update_lottery(self, job_id, data):
-        self.database['lottery'].update_one({'_id': job_id}, {'$set': data})
+        self.database[self.PENDING_LOTTERIES_COLLECTION].update_one({'_id': job_id}, {'$set': data})
 
     def delete_lottery(self, job_id):
-        self.database['lottery'].delete_one({'_id': job_id})
+        self.database[self.PENDING_LOTTERIES_COLLECTION].delete_one({'_id': job_id})
 
     def load_pending_lotteries(self, pending_lotteries):
         data_keys = [
             '_id', 'lottery_id', 'message_id', 'channel_id', 'emoji_code',
             'nb_winners', 'next_run_time', 'organizer_id'
         ]
-        for pending_lottery in self.database['lottery'].find({}, dict.fromkeys(data_keys, 1)):
+        for pending_lottery in self.database[self.PENDING_LOTTERIES_COLLECTION].find(
+                {}, dict.fromkeys(data_keys, 1)):
             pending_lotteries[pending_lottery['message_id']] = dict(pending_lottery)

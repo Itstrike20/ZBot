@@ -10,6 +10,7 @@ from zbot import converter
 from zbot import exceptions
 from zbot import logger
 from zbot import utils
+from zbot import zbot
 from . import command
 from .stats import Stats
 
@@ -27,12 +28,15 @@ class Admin(command.Command):
     RECRUITMENT_CHANNEL_ID = 427027398341558272
     MAX_RECRUITMENT_ANNOUNCE_LENGTH = 1200  # In characters
     MIN_RECRUITMENT_LINE_LENGTH = 100  # In characters
+    MIN_RECRUITMENT_ANNOUNCE_TIMESPAN = 30  # In days
     WORK_IN_PROGRESS_EMOJI = '👀'
     WORK_DONE_EMOJI = '✅'
 
     def __init__(self, bot):
         super(Admin, self).__init__(bot)
         self.app_id = os.getenv('WG_API_APPLICATION_ID') or 'demo'
+        recruitment_channel = bot.get_channel(self.RECRUITMENT_CHANNEL_ID)
+        zbot.db.update_recruitment_announces(recruitment_channel)
 
     @commands.group(
         name=MAIN_COMMAND_NAME,
@@ -54,6 +58,7 @@ class Admin(command.Command):
 
     @check.command(
         name='everyone',
+        aliases=['tous'],
         brief="Effectue une batterie de tests sur les membres du serveur",
         help="Pour chaque membre du serveur, il est vérifié que :\n"
              "• Le joueur possède au moins un rôle.\n"
@@ -61,17 +66,17 @@ class Admin(command.Command):
         ignore_extra=False
     )
     @commands.check(checker.has_any_mod_role)
-    async def everyone(self, context):
+    async def check_everyone(self, context):
         await context.message.add_reaction(self.WORK_IN_PROGRESS_EMOJI)
 
-        await self.have_members_any_role(context, context.guild.members)
-        await self.have_members_unauthorized_clan_tags(context, context.guild.members)
+        await self.check_everyone_role(context, context.guild.members)
+        await self.check_everyone_clan_tag(context, context.guild.members)
 
         await context.message.remove_reaction(self.WORK_IN_PROGRESS_EMOJI, self.user)
         await context.message.add_reaction(self.WORK_DONE_EMOJI)
 
     @staticmethod
-    async def have_members_any_role(context, members):
+    async def check_everyone_role(context, members):
         """Check that all members have at least one role."""
         # Ignore first role as it is @everyone
         if missing_role_members := list(filter(lambda m: len(m.roles) == 1, members)):
@@ -84,8 +89,8 @@ class Admin(command.Command):
             await context.send("Tous les joueurs ont au moins un rôle. :ok_hand: ")
 
     @staticmethod
-    async def have_members_unauthorized_clan_tags(context, members):
-        """Check whether any member has an unauthorized clan tag."""
+    async def check_everyone_clan_tag(context, members):
+        """Check that no member has an unauthorized clan tag."""
         unauthorized_clan_tag_members = []
         for member in members:
             if re.search(r' *[\[{].{2,5}[\]}] *', member.display_name) and \
@@ -101,7 +106,8 @@ class Admin(command.Command):
             await context.send("Aucun joueur n'arbore de tag de clan sans être contact de clan. :ok_hand: ")
 
     @check.command(
-        name='joueur',
+        name='player',
+        aliases=['players', 'joueur'],
         brief="Effectue une batterie de tests sur les joueurs",
         help="Pour chaque joueur, il est vérifié que :\n"
              "• Le surnom corresponde a un pseudo WoT.\n"
@@ -109,21 +115,22 @@ class Admin(command.Command):
         ignore_extra=False
     )
     @commands.check(checker.has_any_mod_role)
-    async def joueur(self, context):
+    async def check_players(self, context):
         await context.message.add_reaction(self.WORK_IN_PROGRESS_EMOJI)
 
         members = []
         for member in context.guild.members:
             if checker.has_role(member, self.PLAYER_ROLE_NAME):
                 members.append(member)
-        await self.have_players_matching_names(context, members, self.app_id)
-        await self.have_players_unique_names(context, members)
+
+        await self.check_players_matching_name(context, members, self.app_id)
+        await self.check_players_unique_name(context, members)
 
         await context.message.remove_reaction(self.WORK_IN_PROGRESS_EMOJI, self.user)
         await context.message.add_reaction(self.WORK_DONE_EMOJI)
 
     @staticmethod
-    async def have_players_matching_names(context, members, app_id):
+    async def check_players_matching_name(context, members, app_id):
         """Check that all players have a matching player name on WoT."""
 
         def _batch(_array, _batch_size):
@@ -161,7 +168,7 @@ class Admin(command.Command):
             await context.send("Tous les joueurs ont une correspondance de pseudo sur WoT. :ok_hand: ")
 
     @staticmethod
-    async def have_players_unique_names(context, members):
+    async def check_players_unique_name(context, members):
         """Check that all players have a unique verified nickname."""
         members_by_name = {}
         for member in members:
@@ -179,6 +186,7 @@ class Admin(command.Command):
 
     @check.command(
         name='contact',
+        aliases=['contacts'],
         brief="Effectue une batterie de tests sur les contacts de clan",
         help="Pour chaque clan, il est vérifié que :\n"
              "• Le surnom du contact du clan contient le tag de celui-ci\n"
@@ -188,7 +196,7 @@ class Admin(command.Command):
         ignore_extra=False
     )
     @commands.check(checker.has_any_mod_role)
-    async def contact(self, context):
+    async def check_contacts(self, context):
         await context.message.add_reaction(self.WORK_IN_PROGRESS_EMOJI)
 
         contacts_by_clan = {}
@@ -201,15 +209,16 @@ class Admin(command.Command):
                 clan_tag = pattern.sub(lambda m: replacements[re.escape(m.group(0))], clan_tag)
                 contacts_by_clan.setdefault(clan_tag, []).append(member)
         contacts = set([contact for contacts in contacts_by_clan.values() for contact in contacts])
-        await self.have_contacts_clan_tag(context, contacts)
-        await self.has_clan_multiple_contacts(context, contacts_by_clan)
-        await self.have_contacts_recruiting_permissions(context, contacts_by_clan, self.app_id)
+
+        await self.check_contacts_clan_tag(context, contacts)
+        await self.check_clans_single_contact(context, contacts_by_clan)
+        await self.check_contacts_recruiting_permissions(context, contacts_by_clan, self.app_id)
 
         await context.message.remove_reaction(self.WORK_IN_PROGRESS_EMOJI, self.user)
         await context.message.add_reaction(self.WORK_DONE_EMOJI)
 
     @staticmethod
-    async def have_contacts_clan_tag(context, contacts):
+    async def check_contacts_clan_tag(context, contacts):
         """Check that all contacts have a clan tag."""
         if missing_clan_tag_members := list(filter(lambda c: ' ' not in c.display_name, contacts)):
             for block in utils.make_message_blocks([
@@ -221,8 +230,8 @@ class Admin(command.Command):
             await context.send("Tous les contacts de clan arborent un tag de clan. :ok_hand: ")
 
     @staticmethod
-    async def has_clan_multiple_contacts(context, contacts_by_clan):
-        """Check whether a clan has more than one contact."""
+    async def check_clans_single_contact(context, contacts_by_clan):
+        """Check that no clan has more than one contact."""
         if multiple_contact_clans := dict(filter(lambda i: len(i[1]) > 1, contacts_by_clan.items())):
             for block in utils.make_message_blocks([
                 f"Le clan [{clan_tag}] est représenté par {len(contacts)} membres : "
@@ -234,15 +243,15 @@ class Admin(command.Command):
             await context.send("Tous les clans représentés le sont par exactement un membre. :ok_hand: ")
 
     @staticmethod
-    async def have_contacts_recruiting_permissions(context, contacts_by_clan, app_id):
-        """Check that clan contacts still have the required clan position."""
+    async def check_contacts_recruiting_permissions(context, contacts_by_clan, app_id):
+        """Check that all clan contacts still have recruiting permissions."""
         disbanded_members, demoted_members = [], []
         for clan_tag, contacts in contacts_by_clan.items():
             for member in contacts:
-                if ' ' in member.display_name:  # Missing clan tag handled by Admin.have_contacts_clan_tag
+                if ' ' in member.display_name:  # Missing clan tag handled by Admin.check_contacts_clan_tag
                     player_name = member.display_name.split(' ')[0]
                     player_id, _ = await Stats.get_player_id(player_name, app_id)
-                    if player_id:  # Non-matching name handled by Admin.have_players_matching_names
+                    if player_id:  # Non-matching name handled by Admin.check_players_matching_name
                         clan_member_infos = await Stats.get_clan_member_infos(player_id, app_id)
                         real_clan_tag = clan_member_infos and clan_member_infos['tag']
                         clan_position = clan_member_infos and clan_member_infos['position']
@@ -269,7 +278,7 @@ class Admin(command.Command):
 
     @check.command(
         name='recruitment',
-        aliases=['recrutement', 'recrut'],
+        aliases=['recruitments', 'recrutement', 'recrut'],
         usage="[\"after\"] [limit]",
         brief="Vérifie la conformité des annonces de recrutement",
         help="Pour chaque annonce dans le canal #recrutement, il est vérifié que :\n"
@@ -283,10 +292,10 @@ class Admin(command.Command):
         ignore_extra=False
     )
     @commands.check(checker.has_any_mod_role)
-    async def recruitment(self, context,
-                          after: converter.to_datetime = converter.to_datetime('1970-01-01'),
-                          limit: int = 100):
-        # TODO handle publication date
+    async def check_recruitments(
+            self, context,
+            after: converter.to_datetime = converter.to_datetime('1970-01-01'),
+            limit: int = 100):
         if limit < 1:
             raise exceptions.UndersizedArgument(limit, 1)
         if (utils.get_current_time() - after).total_seconds() <= 0:
@@ -310,16 +319,17 @@ class Admin(command.Command):
             recruitment_announces
         ))
 
-        await self.have_authors_clan_contact_role(context, recruitment_announces)
-        await self.are_recruitment_announces_unique(context, recruitment_announces)
-        await self.are_recruitment_announces_too_long(context, recruitment_announces)
-        await self.have_recruitment_announces_embeds(context, recruitment_announces)
+        await self.check_authors_clan_contact_role(context, recruitment_announces)
+        await self.check_recruitment_announces_uniqueness(context, recruitment_announces)
+        await self.check_recruitment_announces_length(context, recruitment_announces)
+        await self.check_recruitment_announces_embeds(context, recruitment_announces)
+        await self.check_recruitment_announces_timespan(context, recruitment_announces)
 
         await context.message.remove_reaction(self.WORK_IN_PROGRESS_EMOJI, self.user)
         await context.message.add_reaction(self.WORK_DONE_EMOJI)
 
     @staticmethod
-    async def have_authors_clan_contact_role(context, announces):
+    async def check_authors_clan_contact_role(context, announces):
         """Check that all announce authors have the clan contact role."""
         if missing_clan_contact_role_announces := list(filter(
                 lambda a: not checker.has_guild_role(context.guild, a.author, Stats.CLAN_CONTACT_ROLE_NAME), announces
@@ -335,8 +345,8 @@ class Admin(command.Command):
             )
 
     @staticmethod
-    async def are_recruitment_announces_unique(context, announces):
-        """Check whether all recruitment announces are unique."""
+    async def check_recruitment_announces_uniqueness(context, announces):
+        """Check that no two recruitment announces have the same author."""
         announces_by_author = {}
         for announce in announces:
             announces_by_author.setdefault(announce.author, []).append(announce)
@@ -352,8 +362,8 @@ class Admin(command.Command):
             await context.send("Toutes les annonces de recrutement sont uniques. :ok_hand: ")
 
     @staticmethod
-    async def are_recruitment_announces_too_long(context, announces):
-        """Check whether there is a too long recruitment announce."""
+    async def check_recruitment_announces_length(context, announces):
+        """Check that no recruitment announce is too long."""
         code_block_pattern = re.compile(r'^[^a-zA-Z0-9`]+```.*')
         too_long_announces = []
         for announce in announces:
@@ -378,8 +388,8 @@ class Admin(command.Command):
             await context.send("Toutes les annonces de recrutement sont de longueur réglementaire. :ok_hand: ")
 
     @staticmethod
-    async def have_recruitment_announces_embeds(context, announces):
-        """Check that announces don't have any embed."""
+    async def check_recruitment_announces_embeds(context, announces):
+        """Check that no announce has an embed."""
         # Ignore line starting with code block statements
         discord_link_pattern = re.compile(r'discord(app)?\.(com|gg)')
         embedded_announces = []
@@ -398,6 +408,13 @@ class Admin(command.Command):
             await context.send(
                 f"Aucune annonce de recrutement ne contient d'embed. :ok_hand: "
             )
+
+    @staticmethod
+    async def check_recruitment_announces_timespan(context, announces):
+        """Check that no announce is re-posted before a given timespan."""
+        for announce in announces:
+            print(announce.created_at)
+            zbot.db.insert_recruitment_announce(announce.author.id, announce.created_at)
 
     @admin.command(
         name='logout',
